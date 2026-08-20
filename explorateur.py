@@ -249,7 +249,7 @@ def main():
           f"{len(a.tf.split(','))} unités de temps, sur {a.jours} jours")
     print("Calibrage sur les 60 % les plus anciens, validation sur les 40 % récents.\n")
 
-    survivants, total_teste = [], 0
+    survivants, total_teste, tests_oos = [], 0, 0
     for sym in [f"{c}/USDT" for c in a.coins.split(",")]:
         for tf in a.tf.split(","):
             try:
@@ -279,6 +279,7 @@ def main():
 
             for rend_cal, c in res_cal[:5]:
                 _cache.clear()
+                tests_oos += 1
                 rv = moteur(val, c)
                 bat = rv["rendement"] > ref_val
                 print(f"      {c['nom']:<34} calibrage {rend_cal:+7.1f}%  "
@@ -304,11 +305,17 @@ def main():
         for sym, tf, nom, rc, rv, ref, nt in sorted(survivants, key=lambda x: -x[4]):
             print(f"  {sym:<10}{tf:<4}{nom:<34} validation {rv:+7.1f}% "
                   f"(vs {ref:+.1f}%) — {nt} trades")
-        attendu = total_teste*0.05
-        print(f"\n⚠️  Sur {total_teste} tests, environ {attendu:.0f} peuvent ressortir")
-        print("   gagnants par pur hasard. Ne retenez une stratégie que si elle")
-        print("   apparaît sur PLUSIEURS coins et PLUSIEURS unités de temps —")
-        print("   une seule ligne isolée n'est probablement que du bruit.")
+        attendu = tests_oos/2
+        print(f"\n⚠️  {tests_oos} stratégies ont été évaluées hors échantillon.")
+        print(f"   Sans aucun avantage réel, environ {attendu:.0f} battraient")
+        print(f"   'acheter et garder' par pur hasard. Observé ici : {len(survivants)}.")
+        if len(survivants) < attendu:
+            print("   → MOINS que le hasard : c'est le coût des frais. Aucun avantage.")
+        coins_ok = len({s[0] for s in survivants})
+        tf_ok = len({s[1] for s in survivants})
+        if coins_ok < 2 or tf_ok < 2:
+            print(f"   → Concentré sur {coins_ok} coin(s) et {tf_ok} unité(s) de temps :")
+            print("     signal isolé, très probablement du bruit. À ne PAS mettre en réel.")
     print()
 
 if __name__ == "__main__":

@@ -133,7 +133,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--jours", type=int, default=180)
     ap.add_argument("--tf", default="1h", help="unité de temps : 1h, 4h, 1d")
+    ap.add_argument("--coins", default=None,
+                    help="liste personnalisée, ex: PAXG,XAUT,BTC")
     args = ap.parse_args()
+
+    global COINS
+    if args.coins:
+        COINS = [f"{c.strip().upper()}/USDT" for c in args.coins.split(",")]
 
     ex = ccxt.binance({"enableRateLimit": True})
     print(f"\n=== Comparaison de coins — stratégie EMA {EMA_FAST}/{EMA_SLOW} + RSI < "
