@@ -51,6 +51,13 @@ CAPITAL_FRACTION = float(os.getenv("CAPITAL_FRACTION", "0.98"))  # % du solde US
 MIN_NOTIONAL = 6.0  # marge au-dessus du minimum Binance (5 USDT)
 MAX_LOSS_PCT = float(os.getenv("MAX_LOSS_PCT", "25.0"))  # coupe-circuit global
 
+# Montée en puissance progressive : fraction du capital engagée selon les résultats
+PALIERS = [float(os.getenv("PALIER_1", "50")),    # départ, prudent
+           float(os.getenv("PALIER_2", "75")),    # après 3 trades et P&L cumulé positif
+           float(os.getenv("PALIER_3", "98"))]    # après 6 trades et P&L cumulé positif
+NEWS_FILE = BASE_DIR / "news_gate.json"
+NEWS_MAX_AGE_H = 36  # au-delà, le filtre est considéré périmé et ignoré
+
 
 class ArretDefinitif(Exception):
     """Perte maximale atteinte : le bot se coupe et refuse de continuer."""
@@ -129,6 +136,9 @@ def write_status(state, price, ema_fast, ema_slow, rsi_val, usdt_free, note=""):
                                if pos and price else None),
         "realized_pnl_usdt": round(state.get("realized_pnl_usdt", 0.0), 4),
         "trades_count": len(state.get("trades", [])),
+        "palier": palier_actuel(state)[1],
+        "palier_pct": palier_actuel(state)[0],
+        "news_gate": filtre_news()[1],
         "note": note,
     }
     with open(STATUS_FILE, "w", encoding="utf-8") as f:
@@ -149,6 +159,45 @@ def write_alert(message):
     status["updated_at"] = datetime.now(timezone.utc).isoformat()
     with open(STATUS_FILE, "w", encoding="utf-8") as f:
         json.dump(status, f, indent=2, ensure_ascii=False)
+
+def palier_actuel(state):
+    """Fraction du capital à engager, selon les résultats DÉJÀ réalisés.
+    Monte après des trades gagnants, redescend si le cumul repasse négatif."""
+    clos = [t for t in state.get("trades", []) if t.get("side") == "sell"]
+    pnl = state.get("realized_pnl_usdt", 0.0)
+    if pnl <= 0:
+        niveau = 0                       # tout cumul négatif ramène au palier prudent
+    elif len(clos) >= 6:
+        niveau = 2
+    elif len(clos) >= 3:
+        niveau = 1
+    else:
+        niveau = 0
+    return PALIERS[niveau], niveau + 1, len(clos)
+
+
+def filtre_news():
+    """Lit news_gate.json écrit par la veille quotidienne.
+    Le filtre module le RISQUE, jamais la direction : il ne dit jamais d'acheter."""
+    if not NEWS_FILE.exists():
+        return 1.0, "normal", "aucun filtre news (fichier absent)"
+    try:
+        with open(NEWS_FILE, encoding="utf-8") as f:
+            g = json.load(f)
+        maj = datetime.fromisoformat(g["updated_at"].replace("Z", "+00:00"))
+        age_h = (datetime.now(timezone.utc) - maj).total_seconds() / 3600
+        if age_h > NEWS_MAX_AGE_H:
+            return 1.0, "normal", f"filtre news périmé ({age_h:.0f} h) — ignoré"
+        niveau = str(g.get("niveau", "normal")).lower()
+        raison = str(g.get("raison", ""))[:120]
+        if niveau == "stop":
+            return 0.0, "stop", raison
+        if niveau == "prudence":
+            return 0.5, "prudence", raison
+        return 1.0, "normal", raison
+    except Exception as e:
+        log.warning(f"news_gate.json illisible ({e}) — filtre ignoré")
+        return 1.0, "normal", "filtre news illisible"
 
 # ----------------------------- Exchange -----------------------------
 
@@ -242,11 +291,26 @@ def check_once(ex):
             log.info(f"{PAIR} {last_price:.2f} | {note} | RSI {rsi_v:.1f}")
     else:  # ---- pas de position : chercher une entrée ----
         if ema_f > ema_s and rsi_v < RSI_MAX_BUY:
-            if usdt_free is not None and usdt_free * CAPITAL_FRACTION >= MIN_NOTIONAL:
-                buy(ex, state, last_price, usdt_free * CAPITAL_FRACTION)
-            else:
-                note = f"Signal d'achat mais solde insuffisant ({usdt_free} USDT)"
+            frac, niveau, n_clos = palier_actuel(state)
+            mult, gate, raison = filtre_news()
+            engage = (usdt_free or 0.0) * (frac / 100) * CAPITAL_FRACTION * mult
+
+            if gate == "stop":
+                note = f"Signal d'achat IGNORÉ — filtre news au niveau STOP : {raison}"
                 log.warning(note)
+            elif usdt_free is None:
+                note = "Signal d'achat mais solde illisible"
+                log.warning(note)
+            elif engage < MIN_NOTIONAL:
+                note = (f"Signal d'achat mais mise trop faible : {engage:.2f} USDT "
+                        f"(palier {niveau} = {frac:.0f}% du capital"
+                        + (f", filtre news {gate} ×{mult}" if mult < 1 else "") +
+                        f"), minimum {MIN_NOTIONAL} USDT")
+                log.warning(note)
+            else:
+                log.info(f"Palier {niveau}/3 ({frac:.0f}% du capital, {n_clos} trades "
+                         f"clôturés) | filtre news : {gate}")
+                buy(ex, state, last_price, engage)
         else:
             note = (f"Pas de signal (tendance "
                     f"{'haussière' if ema_f > ema_s else 'baissière'}, RSI {rsi_v:.1f})")
