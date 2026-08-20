@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Logs & data
+trades.log
+*.log
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store

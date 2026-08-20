@@ -1,0 +1,16 @@
+{
+  "updated_at": "2026-08-20T14:17:28.133622+00:00",
+  "pair": "BTC/USDT",
+  "dry_run": true,
+  "price": 71643.79,
+  "ema_fast": 69999.39,
+  "ema_slow": 67842.73,
+  "rsi": 78.8,
+  "trend": "haussière",
+  "usdt_free": 16.08423792,
+  "position": null,
+  "unrealized_pnl_pct": null,
+  "realized_pnl_usdt": 0.0,
+  "trades_count": 0,
+  "note": "Pas de signal (tendance haussière, RSI 78.8)"
+}
